@@ -137,6 +137,15 @@ interface IPancakeRouterV2 {
         address to,
         uint deadline
     ) external;
+
+    
+    function WETH() external view returns (address);
+    function factory() external view returns (address);
+    function getAmountIn(uint amountOut, address[] calldata path) external view returns (uint amountIn);
+    function getAmountOut(uint amountIn, address[] calldata path) external view returns (uint amountOut);
+    function getAmountsIn(uint amountOut, address[] calldata path) external view returns (uint[] memory amountsIn);
+    function getAmountsOut(uint amountIn, address[] calldata path) external view returns (uint[] memory amountsOut);
+    function quote(uint amountA, uint reserveA, uint reserveB) external pure returns (uint amountB);
 }
 
 contract PancakeProxy {
@@ -392,6 +401,36 @@ contract PancakeProxy {
     ) external payable {
         uint fee = _applyFee(msg.value);
         pancakeRouter.swapExactETHForTokensSupportingFeeOnTransferTokens(amountOutMin, path, to, deadline);
+    }
+
+    // Read functions
+
+    function WETH() external view returns (address) {
+        return pancakeRouter.WETH();
+    }
+
+    function factory() external view returns (address) {
+        return pancakeRouter.factory();
+    }
+
+    function getAmountIn(uint amountOut, address[] calldata path) external view returns (uint amountIn) {
+        return pancakeRouter.getAmountIn(amountOut, path);
+    }
+
+    function getAmountOut(uint amountIn, address[] calldata path) external view returns (uint amountOut) {
+        return pancakeRouter.getAmountOut(amountIn, path);
+    }
+
+    function getAmountsIn(uint amountOut, address[] calldata path) external view returns (uint[] memory amountsIn) {
+        return pancakeRouter.getAmountsIn(amountOut, path);
+    }
+
+    function getAmountsOut(uint amountIn, address[] calldata path) external view returns (uint[] memory amountsOut) {
+        return pancakeRouter.getAmountsOut(amountIn, path);
+    }
+
+    function quote(uint amountA, uint reserveA, uint reserveB) external view returns (uint amountB) {
+        return pancakeRouter.quote(amountA, reserveA, reserveB);
     }
 }
 

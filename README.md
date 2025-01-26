@@ -103,6 +103,10 @@ pancakeProxy.setAdmin(newAdminAddress);
 pancakeProxy.setFeePercentage(newFeePercentage);
 ```
 
+## Examples
+
+Testnet BSC: [PancakeProxy](https://testnet.bscscan.com/address/0xe9c471fe397d1ae5dd2f83576a22b423312d95b0#code)
+
 ## Technical Details
 
 - **Solidity Version**: `^0.8.0`

@@ -4,16 +4,44 @@ pragma experimental ABIEncoderV2;
 
 interface IUniversalRouter {
     // Funções de Leitura
+    function onERC1155BatchReceived(
+        address operator,
+        address from,
+        uint256[] calldata ids,
+        uint256[] calldata values,
+        bytes calldata data
+    ) external view returns (bytes4);
+    
+    function onERC1155Received(
+        address operator,
+        address from,
+        uint256 id,
+        uint256 value,
+        bytes calldata data
+    ) external view returns (bytes4);
+    
+    function onERC721Received(
+        address operator,
+        address from,
+        uint256 tokenId,
+        bytes calldata data
+    ) external view returns (bytes4);
+    
     function owner() external view returns (address);
     function paused() external view returns (bool);
     function stableSwapFactory() external view returns (address);
     function stableSwapInfo() external view returns (bytes memory);
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
-    
+
     // Funções de Escrita
     function collectRewards(bytes32[] calldata rewardIds) external payable;
     function execute(bytes calldata commands, bytes[] calldata inputs) external payable;
     function execute(bytes calldata commands, bytes[] calldata inputs, uint256 deadline) external payable;
+    function pancakeV3SwapCallback(
+        int256 amount0Delta,
+        int256 amount1Delta,
+        bytes calldata data
+    ) external payable;
     function pause() external;
     function renounceOwnership() external;
     function setStableSwap(bytes calldata swapInfo) external;
@@ -33,7 +61,7 @@ contract PancakeUniversalRouterProxy {
     constructor(address _router, address _admin) {
         universalRouter = _router;
         admin = _admin;
-        feeRate = 1000;
+        feeRate = 1000; // 10% inicial
     }
 
     modifier onlyAdmin() {
@@ -51,8 +79,8 @@ contract PancakeUniversalRouterProxy {
         uint256[] calldata values,
         bytes calldata data
     ) external view returns (bytes4) {
-        (bool success, bytes memory result) = universalRouter.staticcall(abi.encodeWithSignature(
-            "onERC1155BatchReceived(address,address,uint256[],uint256[],bytes)",
+        (bool success, bytes memory result) = universalRouter.staticcall(abi.encodeWithSelector(
+            IUniversalRouter.onERC1155BatchReceived.selector,
             operator, from, ids, values, data
         ));
         require(success, "Chamada falhou");
@@ -66,8 +94,8 @@ contract PancakeUniversalRouterProxy {
         uint256 value,
         bytes calldata data
     ) external view returns (bytes4) {
-        (bool success, bytes memory result) = universalRouter.staticcall(abi.encodeWithSignature(
-            "onERC1155Received(address,address,uint256,uint256,bytes)",
+        (bool success, bytes memory result) = universalRouter.staticcall(abi.encodeWithSelector(
+            IUniversalRouter.onERC1155Received.selector,
             operator, from, id, value, data
         ));
         require(success, "Chamada falhou");
@@ -80,8 +108,8 @@ contract PancakeUniversalRouterProxy {
         uint256 tokenId,
         bytes calldata data
     ) external view returns (bytes4) {
-        (bool success, bytes memory result) = universalRouter.staticcall(abi.encodeWithSignature(
-            "onERC721Received(address,address,uint256,bytes)",
+        (bool success, bytes memory result) = universalRouter.staticcall(abi.encodeWithSelector(
+            IUniversalRouter.onERC721Received.selector,
             operator, from, tokenId, data
         ));
         require(success, "Chamada falhou");
@@ -112,24 +140,50 @@ contract PancakeUniversalRouterProxy {
     // Funções de Escrita (com taxa)
     // ====================
     function collectRewards(bytes32[] calldata rewardIds) external payable {
-        uint256 fee = (msg.value * feeRate) / 10000;
-        _sendFee(fee);
+        uint256 totalValue = msg.value;
+        uint256 fee = (totalValue * feeRate) / (10000 + feeRate);
+        uint256 operationValue = totalValue - fee;
         
-        IUniversalRouter(universalRouter).collectRewards{value: msg.value - fee}(rewardIds);
+        if(fee > 0) {
+            payable(admin).transfer(fee);
+            emit FeeCollected(admin, fee);
+        }
+        
+        IUniversalRouter(universalRouter).collectRewards{value: operationValue}(rewardIds);
     }
 
     function execute(bytes calldata commands, bytes[] calldata inputs) external payable {
-        uint256 fee = (msg.value * feeRate) / 10000;
-        _sendFee(fee);
+        uint256 totalValue = msg.value;
+        uint256 fee = (totalValue * feeRate) / (10000 + feeRate);
+        uint256 operationValue = totalValue - fee;
         
-        IUniversalRouter(universalRouter).execute{value: msg.value - fee}(commands, inputs);
+        if(fee > 0) {
+            payable(admin).transfer(fee);
+            emit FeeCollected(admin, fee);
+        }
+        
+        IUniversalRouter(universalRouter).execute{value: operationValue}(commands, inputs);
     }
 
     function execute(bytes calldata commands, bytes[] calldata inputs, uint256 deadline) external payable {
-        uint256 fee = (msg.value * feeRate) / 10000;
-        _sendFee(fee);
+        uint256 totalValue = msg.value;
+        uint256 fee = (totalValue * feeRate) / (10000 + feeRate);
+        uint256 operationValue = totalValue - fee;
         
-        IUniversalRouter(universalRouter).execute{value: msg.value - fee}(commands, inputs, deadline);
+        if(fee > 0) {
+            payable(admin).transfer(fee);
+            emit FeeCollected(admin, fee);
+        }
+        
+        (bool success, bytes memory result) = universalRouter.call{value: operationValue}(
+            abi.encodeWithSelector(
+                bytes4(0x3593564c), // Selector correto para execute com deadline
+                commands,
+                inputs,
+                deadline
+            )
+        );
+        require(success, string(abi.encodePacked("Execute failed: ", result)));
     }
 
     function pancakeV3SwapCallback(
@@ -137,14 +191,24 @@ contract PancakeUniversalRouterProxy {
         int256 amount1Delta,
         bytes calldata data
     ) external payable {
-        uint256 fee = (msg.value * feeRate) / 10000;
-        _sendFee(fee);
+        uint256 totalValue = msg.value;
+        uint256 fee = (totalValue * feeRate) / (10000 + feeRate);
+        uint256 operationValue = totalValue - fee;
         
-        (bool success, ) = universalRouter.call{value: msg.value - fee}(abi.encodeWithSignature(
-            "pancakeV3SwapCallback(int256,int256,bytes)",
-            amount0Delta, amount1Delta, data
-        ));
-        require(success, "Falha no callback");
+        if(fee > 0) {
+            payable(admin).transfer(fee);
+            emit FeeCollected(admin, fee);
+        }
+        
+        (bool success, bytes memory result) = universalRouter.call{value: operationValue}(
+            abi.encodeWithSelector(
+                IUniversalRouter.pancakeV3SwapCallback.selector,
+                amount0Delta,
+                amount1Delta,
+                data
+            )
+        );
+        require(success, string(abi.encodePacked("Callback failed: ", result)));
     }
 
     // ====================
@@ -186,15 +250,12 @@ contract PancakeUniversalRouterProxy {
     }
 
     // ====================
-    // Funções Internas
+    // Funções Auxiliares
     // ====================
-    function _sendFee(uint256 fee) internal {
-        if(fee > 0) {
-            payable(admin).transfer(fee);
-            emit FeeCollected(admin, fee);
-        }
-    }
-
-    // Garante recebimento de ETH
     receive() external payable {}
+
+    // Suporte para ERC165
+    function supportsInterface(bytes4 interfaceId) public view returns (bool) {
+        return this.supportsInterface(interfaceId);
+    }
 }

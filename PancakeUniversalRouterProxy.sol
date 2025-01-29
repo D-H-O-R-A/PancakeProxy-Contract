@@ -254,8 +254,4 @@ contract PancakeUniversalRouterProxy {
     // ====================
     receive() external payable {}
 
-    // Suporte para ERC165
-    function supportsInterface(bytes4 interfaceId) public view returns (bool) {
-        return this.supportsInterface(interfaceId);
-    }
 }

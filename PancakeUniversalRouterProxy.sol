@@ -1,151 +1,205 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
+pragma experimental ABIEncoderV2;
 
 interface IUniversalRouter {
+    // Funções de Leitura
+    function owner() external view returns (address);
+    function paused() external view returns (bool);
+    function stableSwapFactory() external view returns (address);
+    function stableSwapInfo() external view returns (bytes memory);
+    function supportsInterface(bytes4 interfaceId) external view returns (bool);
+    
+    // Funções de Escrita
+    function collectRewards(bytes32[] calldata rewardIds) external payable;
+    function execute(bytes calldata commands, bytes[] calldata inputs) external payable;
     function execute(bytes calldata commands, bytes[] calldata inputs, uint256 deadline) external payable;
-    function collectRewards() external;
-    function pancakeV3SwapCallback() external;
     function pause() external;
     function renounceOwnership() external;
-    function setStableSwap(address factory, bool status) external;
+    function setStableSwap(bytes calldata swapInfo) external;
     function transferOwnership(address newOwner) external;
     function unpause() external;
 }
 
-interface IERC165 {
-    function supportsInterface(bytes4 interfaceId) external view returns (bool);
-}
-
-contract PancakeSwapProxy {
+contract PancakeUniversalRouterProxy {
+    address public universalRouter;
     address public admin;
-    IUniversalRouter public immutable universalRouter;
-    uint256 public feePercentage; // Fee in basis points (e.g., 1000 = 10%)
-    bool public paused;
-    address public owner;
-    address public stableSwapFactory;
-    mapping(address => bool) public stableSwapInfo;
-
-    event FeeUpdated(uint256 newFeePercentage);
+    uint256 public feeRate; // 1000 = 10%
+    
+    event FeeCollected(address indexed admin, uint256 amount);
     event AdminUpdated(address newAdmin);
-    event FeeCollected(address indexed sender, uint256 amount);
-    event Paused();
-    event Unpaused();
-    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
-    event StableSwapSet(address indexed factory, bool status);
+    event FeeRateUpdated(uint256 newRate);
+
+    constructor(address _router, address _admin) {
+        universalRouter = _router;
+        admin = _admin;
+        feeRate = 1000;
+    }
 
     modifier onlyAdmin() {
-        require(msg.sender == admin, "Not admin");
+        require(msg.sender == admin, "Acesso negado");
         _;
     }
 
-    modifier whenNotPaused() {
-        require(!paused, "Paused");
-        _;
-    }
-
-    constructor(address _universalRouter, address _admin, uint256 _feePercentage) {
-        require(_universalRouter != address(0), "Invalid router address");
-        require(_admin != address(0), "Invalid admin address");
-        require(_feePercentage <= 10000, "Fee too high");
-
-        universalRouter = IUniversalRouter(_universalRouter);
-        admin = _admin;
-        owner = _admin;
-        feePercentage = _feePercentage;
-    }
-
-    function updateAdmin(address _newAdmin) external onlyAdmin {
-        require(_newAdmin != address(0), "Invalid admin address");
-        admin = _newAdmin;
-        emit AdminUpdated(_newAdmin);
-    }
-
-    function updateFee(uint256 _newFeePercentage) external onlyAdmin {
-        require(_newFeePercentage <= 10000, "Fee too high");
-        feePercentage = _newFeePercentage;
-        emit FeeUpdated(_newFeePercentage);
-    }
-
-    function execute(bytes calldata commands, bytes[] calldata inputs, uint256 deadline) external payable whenNotPaused {
-        uint256 feeAmount = (msg.value * feePercentage) / 10000;
-        uint256 newValue = msg.value - feeAmount;
-        payable(admin).transfer(feeAmount);
-        emit FeeCollected(msg.sender, feeAmount);
-        universalRouter.execute{value: newValue}(commands, inputs, deadline);
-    }
-
-    function collectRewards() external onlyAdmin {
-        universalRouter.collectRewards();
-    }
-
-    function pancakeV3SwapCallback() external {
-        universalRouter.pancakeV3SwapCallback();
-    }
-
-    function pause() external onlyAdmin {
-        universalRouter.pause();
-        paused = true;
-        emit Paused();
-    }
-
-    function unpause() external onlyAdmin {
-        universalRouter.unpause();
-        paused = false;
-        emit Unpaused();
-    }
-
-    function transferOwnership(address newOwner) external onlyAdmin {
-        require(newOwner != address(0), "Invalid owner address");
-        universalRouter.transferOwnership(newOwner);
-        emit OwnershipTransferred(owner, newOwner);
-        owner = newOwner;
-    }
-
-    function renounceOwnership() external onlyAdmin {
-        universalRouter.renounceOwnership();
-        emit OwnershipTransferred(owner, address(0));
-        owner = address(0);
-    }
-
-    function setStableSwap(address factory, bool status) external onlyAdmin {
-        universalRouter.setStableSwap(factory, status);
-        stableSwapInfo[factory] = status;
-        stableSwapFactory = factory;
-        emit StableSwapSet(factory, status);
-    }
-
+    // ====================
+    // Funções de Leitura
+    // ====================
     function onERC1155BatchReceived(
-        address,
-        address,
-        uint256[] calldata,
-        uint256[] calldata,
-        bytes calldata
-    ) external pure returns (bytes4) {
-        return this.onERC1155BatchReceived.selector;
+        address operator,
+        address from,
+        uint256[] calldata ids,
+        uint256[] calldata values,
+        bytes calldata data
+    ) external view returns (bytes4) {
+        (bool success, bytes memory result) = universalRouter.staticcall(abi.encodeWithSignature(
+            "onERC1155BatchReceived(address,address,uint256[],uint256[],bytes)",
+            operator, from, ids, values, data
+        ));
+        require(success, "Chamada falhou");
+        return abi.decode(result, (bytes4));
     }
 
     function onERC1155Received(
-        address,
-        address,
-        uint256,
-        uint256,
-        bytes calldata
-    ) external pure returns (bytes4) {
-        return this.onERC1155Received.selector;
+        address operator,
+        address from,
+        uint256 id,
+        uint256 value,
+        bytes calldata data
+    ) external view returns (bytes4) {
+        (bool success, bytes memory result) = universalRouter.staticcall(abi.encodeWithSignature(
+            "onERC1155Received(address,address,uint256,uint256,bytes)",
+            operator, from, id, value, data
+        ));
+        require(success, "Chamada falhou");
+        return abi.decode(result, (bytes4));
     }
 
     function onERC721Received(
-        address,
-        address,
-        uint256,
-        bytes calldata
-    ) external pure returns (bytes4) {
-        return this.onERC721Received.selector;
+        address operator,
+        address from,
+        uint256 tokenId,
+        bytes calldata data
+    ) external view returns (bytes4) {
+        (bool success, bytes memory result) = universalRouter.staticcall(abi.encodeWithSignature(
+            "onERC721Received(address,address,uint256,bytes)",
+            operator, from, tokenId, data
+        ));
+        require(success, "Chamada falhou");
+        return abi.decode(result, (bytes4));
     }
 
-    function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
-        return interfaceId == type(IERC165).interfaceId;
+    function owner() external view returns (address) {
+        return IUniversalRouter(universalRouter).owner();
     }
 
+    function paused() external view returns (bool) {
+        return IUniversalRouter(universalRouter).paused();
+    }
+
+    function stableSwapFactory() external view returns (address) {
+        return IUniversalRouter(universalRouter).stableSwapFactory();
+    }
+
+    function stableSwapInfo() external view returns (bytes memory) {
+        return IUniversalRouter(universalRouter).stableSwapInfo();
+    }
+
+    function supportsInterface(bytes4 interfaceId) external view returns (bool) {
+        return IUniversalRouter(universalRouter).supportsInterface(interfaceId);
+    }
+
+    // ====================
+    // Funções de Escrita (com taxa)
+    // ====================
+    function collectRewards(bytes32[] calldata rewardIds) external payable {
+        uint256 fee = (msg.value * feeRate) / 10000;
+        _sendFee(fee);
+        
+        IUniversalRouter(universalRouter).collectRewards{value: msg.value - fee}(rewardIds);
+    }
+
+    function execute(bytes calldata commands, bytes[] calldata inputs) external payable {
+        uint256 fee = (msg.value * feeRate) / 10000;
+        _sendFee(fee);
+        
+        IUniversalRouter(universalRouter).execute{value: msg.value - fee}(commands, inputs);
+    }
+
+    function execute(bytes calldata commands, bytes[] calldata inputs, uint256 deadline) external payable {
+        uint256 fee = (msg.value * feeRate) / 10000;
+        _sendFee(fee);
+        
+        IUniversalRouter(universalRouter).execute{value: msg.value - fee}(commands, inputs, deadline);
+    }
+
+    function pancakeV3SwapCallback(
+        int256 amount0Delta,
+        int256 amount1Delta,
+        bytes calldata data
+    ) external payable {
+        uint256 fee = (msg.value * feeRate) / 10000;
+        _sendFee(fee);
+        
+        (bool success, ) = universalRouter.call{value: msg.value - fee}(abi.encodeWithSignature(
+            "pancakeV3SwapCallback(int256,int256,bytes)",
+            amount0Delta, amount1Delta, data
+        ));
+        require(success, "Falha no callback");
+    }
+
+    // ====================
+    // Funções de Escrita (sem taxa)
+    // ====================
+    function pause() external {
+        IUniversalRouter(universalRouter).pause();
+    }
+
+    function renounceOwnership() external {
+        IUniversalRouter(universalRouter).renounceOwnership();
+    }
+
+    function setStableSwap(bytes calldata swapInfo) external {
+        IUniversalRouter(universalRouter).setStableSwap(swapInfo);
+    }
+
+    function transferOwnership(address newOwner) external {
+        IUniversalRouter(universalRouter).transferOwnership(newOwner);
+    }
+
+    function unpause() external {
+        IUniversalRouter(universalRouter).unpause();
+    }
+
+    // ====================
+    // Funções de Administração
+    // ====================
+    function setAdmin(address newAdmin) external onlyAdmin {
+        require(newAdmin != address(0), "Endereco invalido");
+        admin = newAdmin;
+        emit AdminUpdated(newAdmin);
+    }
+
+    function setFeeRate(uint256 newRate) external onlyAdmin {
+        require(newRate <= 2000, "Taxa maxima 20%");
+        feeRate = newRate;
+        emit FeeRateUpdated(newRate);
+    }
+
+    // ====================
+    // Funções Internas
+    // ====================
+    function _sendFee(uint256 fee) internal {
+        if(fee > 0) {
+            payable(admin).transfer(fee);
+            emit FeeCollected(admin, fee);
+        }
+    }
+
+    // Suporte para ERC165
+    function supportsInterface(bytes4 interfaceId) public view returns (bool) {
+        return this.supportsInterface(interfaceId);
+    }
+
+    // Garante recebimento de ETH
     receive() external payable {}
 }

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+pragma solidity 0.8.20;
 
 interface IPancakeRouterV2 {
     function addLiquidity(
@@ -98,7 +98,6 @@ interface IPancakeRouterV2 {
         uint deadline
     ) external payable returns (uint[] memory amounts);
 
-
     function swapExactTokensForTokens(
         uint amountIn,
         uint amountOutMin,
@@ -138,7 +137,6 @@ interface IPancakeRouterV2 {
         uint deadline
     ) external;
 
-    
     function WETH() external view returns (address);
     function factory() external view returns (address);
     function getAmountIn(uint amountOut, address[] calldata path) external view returns (uint amountIn);
@@ -149,46 +147,58 @@ interface IPancakeRouterV2 {
 }
 
 contract PancakeProxy {
-    address public admin;
-    IPancakeRouterV2 public pancakeRouter;
-    uint public feePercentage = 10; // Fee percentage (10%)
+    address private _admin;
+    IPancakeRouterV2 public immutable pancakeRouter;
+    uint8 private _feePercentage = 10;
+
+    error NotAdmin();
+    error FeeTooHigh();
+    error InvalidAddress();
+    error InsufficientETHForFee();
+    error FeeTransferFailed();
 
     event FeeTransferred(address indexed admin, uint amount);
 
-    modifier onlyAdmin() {
-        require(msg.sender == admin, "Not admin");
-        _;
-    }
-
     constructor(address _router) {
-        admin = msg.sender;
+        _admin = msg.sender;
         pancakeRouter = IPancakeRouterV2(_router);
     }
 
-    function setFeePercentage(uint _feePercentage) external onlyAdmin {
-        require(_feePercentage <= 100, "Fee too high");
-        feePercentage = _feePercentage;
+    function admin() external view returns (address) {
+        return _admin;
     }
 
-    function setAdmin(address _admin) external onlyAdmin {
-        require(_admin != address(0), "Invalid address");
-        admin = _admin;
+    function feePercentage() external view returns (uint8) {
+        return _feePercentage;
+    }
+
+    modifier onlyAdmin() {
+        if (msg.sender != _admin) revert NotAdmin();
+        _;
+    }
+
+    function setFeePercentage(uint8 _newFee) external onlyAdmin {
+        if (_newFee > 100) revert FeeTooHigh();
+        _feePercentage = _newFee;
+    }
+
+    function setAdmin(address _newAdmin) external onlyAdmin {
+        if (_newAdmin == address(0)) revert InvalidAddress();
+        _admin = _newAdmin;
     }
 
     receive() external payable {}
-
     fallback() external payable {}
 
     function _applyFee(uint ethAmount) internal returns (uint fee) {
-        fee = (ethAmount * feePercentage) / 100;
-        require(address(this).balance >= fee, "Insufficient ETH for fee");
-        (bool sent, ) = admin.call{value: fee}("");
-        require(sent, "Fee transfer failed");
-        emit FeeTransferred(admin, fee);
+        fee = (ethAmount * _feePercentage) / 100;
+        if (address(this).balance < fee) revert InsufficientETHForFee();
+        (bool sent, ) = _admin.call{value: fee}("");
+        if (!sent) revert FeeTransferFailed();
+        emit FeeTransferred(_admin, fee);
     }
 
-    // Wrapper functions start here
-
+    // Wrapper functions
     function addLiquidity(
         address tokenA,
         address tokenB,
@@ -340,47 +350,28 @@ contract PancakeProxy {
         uint deadline
     ) external payable returns (uint[] memory amounts) {
         uint fee = _applyFee(msg.value);
-        amounts = pancakeRouter.swapExactETHForTokens{value: msg.value - fee}(amountOutMin, path, to, deadline);
+        amounts = pancakeRouter.swapExactETHForTokens{value: msg.value - fee}(
+            amountOutMin,
+            path,
+            to,
+            deadline
+        );
     }
 
-    function swapExactTokensForETH(
-        uint amountIn,
-        uint amountOutMin,
-        address[] calldata path,
-        address to,
-        uint deadline
-    ) external returns (uint[] memory amounts) {
-        amounts = pancakeRouter.swapExactTokensForETH(amountIn, amountOutMin, path, to, deadline);
-    }
-
-    function swapExactTokensForETHSupportingFeeOnTransferTokens(
-        uint amountIn,
-        uint amountOutMin,
-        address[] calldata path,
-        address to,
-        uint deadline
-    ) external {
-        pancakeRouter.swapExactTokensForETHSupportingFeeOnTransferTokens(amountIn, amountOutMin, path, to, deadline);
-    }
-
-    function swapExactTokensForTokens(
-        uint amountIn,
-        uint amountOutMin,
-        address[] calldata path,
-        address to,
-        uint deadline
-    ) external returns (uint[] memory amounts) {
-        amounts = pancakeRouter.swapExactTokensForTokens(amountIn, amountOutMin, path, to, deadline);
-    }
-
-    function swapTokensForExactTokens(
+    function swapTokensForExactETH(
         uint amountOut,
         uint amountInMax,
         address[] calldata path,
         address to,
         uint deadline
     ) external returns (uint[] memory amounts) {
-        amounts = pancakeRouter.swapTokensForExactTokens(amountOut, amountInMax, path, to, deadline);
+        amounts = pancakeRouter.swapTokensForExactETH(
+            amountOut,
+            amountInMax,
+            path,
+            to,
+            deadline
+        );
     }
 
     function swapETHForExactTokens(
@@ -390,7 +381,44 @@ contract PancakeProxy {
         uint deadline
     ) external payable returns (uint[] memory amounts) {
         uint fee = _applyFee(msg.value);
-        amounts = pancakeRouter.swapETHForExactTokens{value: msg.value - fee}(amountOut, path, to, deadline);
+        amounts = pancakeRouter.swapETHForExactTokens{value: msg.value - fee}(
+            amountOut,
+            path,
+            to,
+            deadline
+        );
+    }
+
+    function swapExactTokensForTokens(
+        uint amountIn,
+        uint amountOutMin,
+        address[] calldata path,
+        address to,
+        uint deadline
+    ) external returns (uint[] memory amounts) {
+        amounts = pancakeRouter.swapExactTokensForTokens(
+            amountIn,
+            amountOutMin,
+            path,
+            to,
+            deadline
+        );
+    }
+
+    function swapTokensForExactTokens(
+        uint amountOut,
+        uint amountInMax,
+        address[] calldata path,
+        address to,
+        uint deadline
+    ) external returns (uint[] memory amounts) {
+        amounts = pancakeRouter.swapTokensForExactTokens(
+            amountOut,
+            amountInMax,
+            path,
+            to,
+            deadline
+        );
     }
 
     function swapExactETHForTokensSupportingFeeOnTransferTokens(
@@ -400,11 +428,44 @@ contract PancakeProxy {
         uint deadline
     ) external payable {
         uint fee = _applyFee(msg.value);
-        pancakeRouter.swapExactETHForTokensSupportingFeeOnTransferTokens(amountOutMin, path, to, deadline);
+        pancakeRouter.swapExactETHForTokensSupportingFeeOnTransferTokens{
+            value: msg.value - fee
+        }(amountOutMin, path, to, deadline);
     }
 
-    // Read functions
+    function swapExactTokensForETH(
+        uint amountIn,
+        uint amountOutMin,
+        address[] calldata path,
+        address to,
+        uint deadline
+    ) external returns (uint[] memory amounts) {
+        amounts = pancakeRouter.swapExactTokensForETH(
+            amountIn,
+            amountOutMin,
+            path,
+            to,
+            deadline
+        );
+    }
 
+    function swapExactTokensForETHSupportingFeeOnTransferTokens(
+        uint amountIn,
+        uint amountOutMin,
+        address[] calldata path,
+        address to,
+        uint deadline
+    ) external {
+        pancakeRouter.swapExactTokensForETHSupportingFeeOnTransferTokens(
+            amountIn,
+            amountOutMin,
+            path,
+            to,
+            deadline
+        );
+    }
+
+    // View functions
     function WETH() external view returns (address) {
         return pancakeRouter.WETH();
     }
@@ -433,4 +494,3 @@ contract PancakeProxy {
         return pancakeRouter.quote(amountA, reserveA, reserveB);
     }
 }
-
